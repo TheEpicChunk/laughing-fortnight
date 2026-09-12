@@ -21,7 +21,7 @@ DEFAULT_GPA_SCALE = [
 ]
 
 def get_default_classes():
-    return {"Select "Manage Active Class" to rename me!": {"paste": "", "s_weight": 70, "f_weight": 30, "upcoming": []}}
+    return {"Select 'Manage Active Class' to rename me!": {"paste": "", "s_weight": 70, "f_weight": 30, "upcoming": []}}
 
 # --- PER-USER SESSION ISOLATION ---
 if 'classes' not in st.session_state:
