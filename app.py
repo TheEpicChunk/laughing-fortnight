@@ -23,12 +23,49 @@ DEFAULT_GPA_SCALE = [
 def get_default_classes():
     return {"Select 'Manage Active Class' to rename me!": {"paste": "", "s_weight": 70, "f_weight": 30, "upcoming": []}}
 
+def get_default_settings():
+    return {
+        "animations": True,
+        "celebrations": True,
+        "accent_color": "#FF4B4B",
+        "default_target": 90.0
+    }
+
 # --- PER-USER SESSION ISOLATION ---
 if 'classes' not in st.session_state:
     st.session_state.classes = get_default_classes()
 
 if 'gpa_scale' not in st.session_state:
     st.session_state.gpa_scale = [dict(row) for row in DEFAULT_GPA_SCALE]
+
+if 'settings' not in st.session_state:
+    st.session_state.settings = get_default_settings()
+
+# ==========================================
+# DYNAMIC CSS INJECTION (Animations & Theming)
+# ==========================================
+custom_css = ""
+
+# 1. Bouncy Animations
+if st.session_state.settings.get("animations", True):
+    custom_css += """
+    .stButton>button { transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important; border-radius: 8px !important; }
+    .stButton>button:hover { transform: scale(1.03) translateY(-2px) !important; box-shadow: 0 5px 15px rgba(0,0,0,0.1) !important; }
+    .stButton>button:active { transform: scale(0.95) !important; }
+    [data-testid="stMetric"] { transition: transform 0.2s ease, box-shadow 0.2s ease !important; padding: 10px !important; border-radius: 10px !important; }
+    [data-testid="stMetric"]:hover { transform: translateY(-3px) !important; background-color: rgba(150, 150, 150, 0.05) !important; }
+    """
+
+# 2. Accent Color
+accent = st.session_state.settings.get("accent_color", "#FF4B4B")
+if accent != "#FF4B4B":
+    custom_css += f"""
+    .stButton>button:hover {{ border-color: {accent} !important; color: {accent} !important; }}
+    [data-testid="stMetricValue"] {{ color: {accent} !important; }}
+    """
+
+if custom_css:
+    st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
 
 # ==========================================
 # SIDEBAR: MANAGEMENT & LOCAL DATA EXPORT/IMPORT
@@ -40,6 +77,8 @@ with st.sidebar.form("add_class_form", clear_on_submit=True):
     if st.form_submit_button("➕ Add Class") and new_class_name:
         if new_class_name not in st.session_state.classes:
             st.session_state.classes[new_class_name] = {"paste": "", "s_weight": 80, "f_weight": 20, "upcoming": []}
+            if st.session_state.settings.get("celebrations", True):
+                st.toast(f'Added {new_class_name}!', icon='📚')
             st.rerun()
 
 class_list = list(st.session_state.classes.keys())
@@ -71,16 +110,16 @@ else:
 
 st.sidebar.write("---")
 st.sidebar.markdown("### 💾 Personal Data Backup")
-st.sidebar.caption("Data is kept private in your browser session. Download your data to keep a copy or restore it anytime.")
 
 # Export JSON
 export_data = json.dumps({
     "classes": st.session_state.classes,
-    "gpa_scale": st.session_state.gpa_scale
+    "gpa_scale": st.session_state.gpa_scale,
+    "settings": st.session_state.settings
 }, indent=2)
 
 st.sidebar.download_button(
-    label="📥 Download My Data (.json)",
+    label="📥 Download Data Backup (.json)",
     data=export_data,
     file_name="my_student_toolkit_data.json",
     mime="application/json",
@@ -88,26 +127,28 @@ st.sidebar.download_button(
 )
 
 # Import JSON
-uploaded_backup = st.sidebar.file_uploader("📤 Restore Saved Data", type=["json"])
+uploaded_backup = st.sidebar.file_uploader("📤 Restore Data Backup", type=["json"])
 if uploaded_backup is not None:
     try:
         loaded = json.load(uploaded_backup)
-        if "classes" in loaded and "gpa_scale" in loaded:
+        if "classes" in loaded:
             st.session_state.classes = loaded["classes"]
-            st.session_state.gpa_scale = loaded["gpa_scale"]
-            st.sidebar.success("Data restored successfully!")
+            st.session_state.gpa_scale = loaded.get("gpa_scale", [dict(row) for row in DEFAULT_GPA_SCALE])
+            st.session_state.settings = loaded.get("settings", get_default_settings())
+            if st.session_state.settings.get("celebrations", True):
+                st.toast('Data restored successfully!', icon='💾')
             st.rerun()
     except Exception:
         st.sidebar.error("Invalid backup file format.")
 
-# Reset All Data
 if st.sidebar.button("🔄 Reset Entire App to Default"):
     st.session_state.classes = get_default_classes()
     st.session_state.gpa_scale = [dict(row) for row in DEFAULT_GPA_SCALE]
+    st.session_state.settings = get_default_settings()
     st.rerun()
 
 # ==========================================
-# PARSER & CALCULATION HELPERS
+# PARSER HELPER
 # ==========================================
 def calculate_grade(paste_data, s_w, f_w, drop_lowest=False):
     s_earned, s_pos, f_earned, f_pos = 0.0, 0.0, 0.0, 0.0
@@ -118,8 +159,7 @@ def calculate_grade(paste_data, s_w, f_w, drop_lowest=False):
         matches = re.findall(pattern, paste_data, flags=re.IGNORECASE | re.DOTALL)
         
         for date_str, name, cat, earned, possible in matches:
-            name = name.strip()
-            cat = cat.lower()
+            name, cat = name.strip(), cat.lower()
             earned, possible = float(earned), float(possible)
             
             if possible > 0:
@@ -161,73 +201,54 @@ def calculate_grade(paste_data, s_w, f_w, drop_lowest=False):
 # MAIN APP HEADER & TABS
 # ==========================================
 st.title("🎓 Student Toolkit")
-tab_dash, tab_grade, tab_panic, tab_cal, tab_gpa = st.tabs([
-    "📊 Dashboard & Priority Matrix",
+tab_dash, tab_grade, tab_panic, tab_cal, tab_gpa, tab_settings = st.tabs([
+    "📊 Dashboard",
     "📝 Class Calculator",
-    "🚨 Final Exam Panic Calc",
-    "📅 Due Date Visualizer",
-    "🎯 GPA Planner"
+    "🚨 Exam Panic Calc",
+    "📅 Due Dates",
+    "🎯 GPA Planner",
+    "⚙️ Settings"
 ])
 
 # ==========================================
-# TAB 1: DASHBOARD & SMART STUDY PRIORITY MATRIX
+# TAB 1: DASHBOARD
 # ==========================================
 with tab_dash:
     st.markdown("### 📈 Overall Academic Overview")
     cols = st.columns(3)
-    
     class_stats = []
     
     for idx, (c_name, data) in enumerate(st.session_state.classes.items()):
         overall, s_earned, s_pos, f_earned, f_pos, s_pct, f_pct, _ = calculate_grade(data["paste"], data["s_weight"], data["f_weight"])
-        
         status_color = "🟢" if overall >= 90 else "🟡" if overall >= 80 else "🔴" if overall > 0 else "⚪"
         
         col = cols[idx % 3]
         col.info(f"### {status_color} {c_name}\n**{round(overall, 2)}%**" if overall > 0 else f"### {status_color} {c_name}\n**No Data**")
 
-        # Priority Matrix Scoring
         priority_score = 0
         reasons = []
-        
         if overall > 0:
-            # Check proximity to letter grade cutoff (e.g. 88.5-89.9%)
             mod = overall % 10
             if 8.5 <= mod <= 9.9 or 78.5 <= overall <= 79.9:
                 priority_score += 40
                 reasons.append("🎯 **Grade Edge Alert**: Very close to crossing a letter grade boundary!")
-            
             if overall < 80:
                 priority_score += 30
                 reasons.append("⚠️ **Grade Below 80%**: Needs attention to raise standing.")
-                
             upcoming_count = len(data.get("upcoming", []))
             if upcoming_count > 0:
                 priority_score += upcoming_count * 15
-                reasons.append(f"📌 **Upcoming Assignments**: {upcoming_count} future item(s) pending.")
+                reasons.append(f"📌 **Upcoming Assignments**: {upcoming_count} pending.")
 
-        class_stats.append({
-            "name": c_name,
-            "overall": overall,
-            "priority": priority_score,
-            "reasons": reasons
-        })
+        class_stats.append({"name": c_name, "overall": overall, "priority": priority_score, "reasons": reasons})
 
     st.write("---")
     st.markdown("### 🎯 Smart Study Priority Matrix")
-    st.caption("Ranks your classes automatically based on grade vulnerability, cutoff proximity, and upcoming deadlines.")
-
-    # Sort classes by priority score descending
     class_stats.sort(key=lambda x: x["priority"], reverse=True)
 
     for item in class_stats:
         p_score = item["priority"]
-        if p_score >= 40:
-            badge = "🔴 HIGH PRIORITY"
-        elif p_score >= 15:
-            badge = "🟡 MEDIUM PRIORITY"
-        else:
-            badge = "🟢 STABLE / LOW PRIORITY"
+        badge = "🔴 HIGH PRIORITY" if p_score >= 40 else "🟡 MEDIUM PRIORITY" if p_score >= 15 else "🟢 LOW PRIORITY"
 
         with st.expander(f"{badge} — **{item['name']}** ({round(item['overall'], 2)}%)"):
             if item["reasons"]:
@@ -244,10 +265,8 @@ with tab_grade:
     
     with st.expander("📋 1. Paste StudentVUE Data & Set Weights", expanded=not bool(c_data["paste"])):
         col_s, col_f = st.columns(2)
-        with col_s:
-            c_data["s_weight"] = st.number_input("Summative Weight (%)", value=c_data["s_weight"], max_value=100, step=5)
-        with col_f:
-            c_data["f_weight"] = st.number_input("Formative Weight (%)", value=c_data["f_weight"], max_value=100, step=5)
+        with col_s: c_data["s_weight"] = st.number_input("Summative Weight (%)", value=c_data["s_weight"], max_value=100, step=5)
+        with col_f: c_data["f_weight"] = st.number_input("Formative Weight (%)", value=c_data["f_weight"], max_value=100, step=5)
         
         c_data["paste"] = st.text_area("Paste assignments from StudentVUE here:", value=c_data["paste"], height=150)
         
@@ -267,7 +286,7 @@ with tab_grade:
     
     with st.expander("🔍 View Detected Graded Assignments"):
         if parsed_assignments:
-            display_list = [{"Date": a["date"], "Assignment Name": a["name"], "Category": a["cat"].capitalize(), "Score": f"{a['earned']} / {a['possible']}", "Percent": f"{a['pct']*100:.1f}%"} for a in parsed_assignments]
+            display_list = [{"Date": a["date"], "Name": a["name"], "Category": a["cat"].capitalize(), "Score": f"{a['earned']} / {a['possible']}", "Percent": f"{a['pct']*100:.1f}%"} for a in parsed_assignments]
             st.dataframe(display_list, use_container_width=True)
         else:
             st.info("No graded assignments found in the pasted text yet.")
@@ -285,15 +304,10 @@ with tab_grade:
                 count = 0
                 for date_str, name, cat, pts in matches:
                     if not any(a["Name"] == name.strip() for a in c_data["upcoming"]):
-                        c_data["upcoming"].append({
-                            "Date": date_str.strip() if date_str else "N/A",
-                            "Name": name.strip(),
-                            "Category": cat.capitalize(),
-                            "Points": float(pts)
-                        })
+                        c_data["upcoming"].append({"Date": date_str.strip() if date_str else "N/A", "Name": name.strip(), "Category": cat.capitalize(), "Points": float(pts)})
                         count += 1
                 if count > 0:
-                    st.success(f"Added {count} new upcoming assignment(s)!")
+                    if st.session_state.settings.get("celebrations", True): st.toast(f'Added {count} upcoming assignments!', icon='📌')
                 else:
                     st.info("No new upcoming assignments found.")
                 st.rerun()
@@ -318,25 +332,22 @@ with tab_grade:
                 st.rerun()
     
     edited_upcoming = st.data_editor(
-        c_data["upcoming"],
-        num_rows="dynamic",
+        c_data["upcoming"], num_rows="dynamic",
         column_config={
             "Date": st.column_config.TextColumn("Due Date"),
             "Name": st.column_config.TextColumn("Assignment Name", required=True),
             "Category": st.column_config.SelectboxColumn("Category", options=["Summative", "Formative"], required=True),
             "Points": st.column_config.NumberColumn("Points Possible", min_value=0.1, required=True)
         },
-        use_container_width=True,
-        key=f"editor_{active_class}"
+        use_container_width=True, key=f"editor_{active_class}"
     )
     
-    if edited_upcoming != c_data["upcoming"]:
-        c_data["upcoming"] = edited_upcoming
+    if edited_upcoming != c_data["upcoming"]: c_data["upcoming"] = edited_upcoming
         
     if len(edited_upcoming) > 0:
         st.write("---")
         st.markdown("#### 🎯 Min-Max Target Calculator")
-        target_grade = st.number_input("What is your Target Overall Grade? (%)", min_value=0.0, max_value=150.0, value=90.0, step=1.0)
+        target_grade = st.number_input("What is your Target Overall Grade? (%)", min_value=0.0, max_value=150.0, value=st.session_state.settings.get("default_target", 90.0), step=1.0)
         
         assumed_scores = []
         if len(edited_upcoming) > 1:
@@ -350,27 +361,17 @@ with tab_grade:
         last_ast = edited_upcoming[-1]
         last_cat, last_pts, last_name = last_ast.get("Category", "Summative"), float(last_ast.get("Points", 1.0)), last_ast.get("Name", "Final Assignment")
         
-        s_earned_new, s_pos_new = s_earned, s_pos
-        f_earned_new, f_pos_new = f_earned, f_pos
+        s_earned_new, s_pos_new, f_earned_new, f_pos_new = s_earned, s_pos, f_earned, f_pos
         
         for i in range(len(edited_upcoming) - 1):
-            cat = edited_upcoming[i].get("Category")
-            pts = float(edited_upcoming[i].get("Points", 1.0))
-            e = assumed_scores[i]
-            if cat == "Summative":
-                s_earned_new += e
-                s_pos_new += pts
-            else:
-                f_earned_new += e
-                f_pos_new += pts
+            cat, pts, e = edited_upcoming[i].get("Category"), float(edited_upcoming[i].get("Points", 1.0)), assumed_scores[i]
+            if cat == "Summative": s_earned_new += e; s_pos_new += pts
+            else: f_earned_new += e; f_pos_new += pts
 
-        if last_cat == "Summative":
-            s_pos_new += last_pts
-        else:
-            f_pos_new += last_pts
+        if last_cat == "Summative": s_pos_new += last_pts
+        else: f_pos_new += last_pts
             
-        target_dec = target_grade / 100.0
-        w_s, w_f = c_data["s_weight"] / 100.0, c_data["f_weight"] / 100.0
+        target_dec, w_s, w_f = target_grade / 100.0, c_data["s_weight"] / 100.0, c_data["f_weight"] / 100.0
         active_w_s = w_s if (f_pos_new > 0) else 1.0
         active_w_f = w_f if (s_pos_new > 0) else 1.0
         
@@ -379,170 +380,127 @@ with tab_grade:
             f_pct_new = (f_earned_new / f_pos_new) if f_pos_new > 0 else 0.0
             f_contribution = f_pct_new * active_w_f if f_pos_new > 0 else 0.0
             if active_w_s > 0:
-                needed_s_pct = (target_dec - f_contribution) / active_w_s
-                needed_s_earned = needed_s_pct * s_pos_new
-                needed_points = needed_s_earned - s_earned_new
+                needed_points = ((target_dec - f_contribution) / active_w_s) * s_pos_new - s_earned_new
         else:
             s_pct_new = (s_earned_new / s_pos_new) if s_pos_new > 0 else 0.0
             s_contribution = s_pct_new * active_w_s if s_pos_new > 0 else 0.0
             if active_w_f > 0:
-                needed_f_pct = (target_dec - s_contribution) / active_w_f
-                needed_f_earned = needed_f_pct * f_pos_new
-                needed_points = needed_f_earned - f_earned_new
+                needed_points = ((target_dec - s_contribution) / active_w_f) * f_pos_new - f_earned_new
 
         st.markdown(f"#### Score needed on: **{last_name}** ({last_pts} pts)")
-        if needed_points > last_pts:
-            st.error(f"You need **{needed_points:.1f} / {last_pts}** (**{needed_points/last_pts*100:.1f}%**) — Requires Extra Credit!")
-        elif needed_points <= 0:
-            st.success(f"You need **{needed_points:.1f} / {last_pts}** — Safe even with a 0!")
-        else:
-            st.success(f"You need **{needed_points:.1f} / {last_pts}** (**{needed_points/last_pts*100:.1f}%**)")
+        if needed_points > last_pts: st.error(f"You need **{needed_points:.1f} / {last_pts}** (**{needed_points/last_pts*100:.1f}%**) — Requires Extra Credit!")
+        elif needed_points <= 0: st.success(f"You need **{needed_points:.1f} / {last_pts}** — Safe even with a 0!")
+        else: st.success(f"You need **{needed_points:.1f} / {last_pts}** (**{needed_points/last_pts*100:.1f}%**)")
 
 # ==========================================
-# TAB 3: FINAL EXAM PANIC CALCULATOR
+# TAB 3 & 4: PANIC CALC & CALENDAR
 # ==========================================
 with tab_panic:
     st.markdown("### 🚨 Final Exam Panic Calculator")
-    st.caption("Determine the exact score required on your final exam to achieve or maintain your desired course grade.")
-
     col_p1, col_p2 = st.columns(2)
-    
     with col_p1:
         selected_panic_class = st.selectbox("Import grade from class:", ["Manual Entry"] + list(st.session_state.classes.keys()))
-        
         if selected_panic_class != "Manual Entry":
-            c_p_data = st.session_state.classes[selected_panic_class]
-            curr_g, _, _, _, _, _, _, _ = calculate_grade(c_p_data["paste"], c_p_data["s_weight"], c_p_data["f_weight"])
-            current_class_grade = st.number_input("Current Class Grade (%)", min_value=0.0, max_value=150.0, value=float(round(curr_g, 2)))
+            curr_g, _, _, _, _, _, _, _ = calculate_grade(st.session_state.classes[selected_panic_class]["paste"], st.session_state.classes[selected_panic_class]["s_weight"], st.session_state.classes[selected_panic_class]["f_weight"])
+            current_class_grade = st.number_input("Current Grade (%)", min_value=0.0, value=float(round(curr_g, 2)))
         else:
-            current_class_grade = st.number_input("Current Class Grade (%)", min_value=0.0, max_value=150.0, value=88.0)
-
-        exam_weight = st.number_input("Final Exam Weight (% of Total Grade)", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
-        target_final_grade = st.number_input("Target Course Grade (%)", min_value=0.0, max_value=150.0, value=90.0, step=1.0)
+            current_class_grade = st.number_input("Current Grade (%)", min_value=0.0, value=88.0)
+        exam_weight = st.number_input("Final Exam Weight (%)", min_value=1.0, value=20.0)
+        target_final_grade = st.number_input("Target Course Grade (%)", min_value=0.0, value=st.session_state.settings.get("default_target", 90.0))
 
     with col_p2:
         if exam_weight > 0:
             w_dec = exam_weight / 100.0
-            current_weight = 1.0 - w_dec
-            
-            req_exam_score = (target_final_grade - (current_class_grade * current_weight)) / w_dec
-            
+            req_exam_score = (target_final_grade - (current_class_grade * (1.0 - w_dec))) / w_dec
             st.markdown("#### Calculation Result")
-            if req_exam_score > 100:
-                st.error(f"You need **{req_exam_score:.1f}%** on the final exam. (Requires extra credit!)")
-            elif req_exam_score <= 0:
-                st.success(f"You need **{req_exam_score:.1f}%** — You've already secured your target grade!")
-            else:
-                st.info(f"You need **{req_exam_score:.1f}%** on the final exam to reach a **{target_final_grade:.0f}%**.")
+            if req_exam_score > 100: st.error(f"You need **{req_exam_score:.1f}%**. (Requires extra credit!)")
+            elif req_exam_score <= 0: st.success(f"You need **{req_exam_score:.1f}%** — You've secured your target grade!")
+            else: st.info(f"You need **{req_exam_score:.1f}%** to reach a **{target_final_grade:.0f}%**.")
 
-            st.write("---")
-            st.markdown("##### Quick Reference Target Table")
-            quick_targets = [90, 80, 70, 60]
-            table_data = []
-            for t in quick_targets:
-                req = (t - (current_class_grade * current_weight)) / w_dec
-                status = "Safe" if req <= 0 else "Extra Credit Needed" if req > 100 else f"{req:.1f}%"
-                table_data.append({"Target Grade": f"{t}%", "Required Exam Score": status})
-            st.table(table_data)
-
-# ==========================================
-# TAB 4: CALENDAR & DUE DATE VISUALIZER
-# ==========================================
 with tab_cal:
-    st.markdown("### 📅 Calendar & Due Date Visualizer")
-    st.caption("Consolidates all upcoming assignments across all classes sorted by due date.")
-
-    all_upcoming = []
-    
-    for c_name, data in st.session_state.classes.items():
-        for item in data.get("upcoming", []):
-            d_str = item.get("Date", "N/A")
-            all_upcoming.append({
-                "Class": c_name,
-                "Due Date": d_str,
-                "Assignment Name": item.get("Name", "Assignment"),
-                "Category": item.get("Category", "Formative"),
-                "Points": item.get("Points", 0)
-            })
+    st.markdown("### 📅 Due Date Visualizer")
+    all_upcoming = [{"Class": c_name, "Due Date": item.get("Date", "N/A"), "Assignment Name": item.get("Name", "Assignment"), "Category": item.get("Category", "Formative"), "Points": item.get("Points", 0)} for c_name, data in st.session_state.classes.items() for item in data.get("upcoming", [])]
 
     if all_upcoming:
-        # Sort items with valid dates first
         def parse_date(x):
-            try:
-                return datetime.strptime(x["Due Date"], "%m/%d/%y")
-            except Exception:
-                try:
-                    return datetime.strptime(x["Due Date"], "%m/%d/%Y")
-                except Exception:
-                    return datetime.max
-
+            try: return datetime.strptime(x["Due Date"], "%m/%d/%y")
+            except:
+                try: return datetime.strptime(x["Due Date"], "%m/%d/%Y")
+                except: return datetime.max
         all_upcoming.sort(key=parse_date)
-        
         st.dataframe(all_upcoming, use_container_width=True)
-        
-        st.write("---")
-        st.markdown("#### ⏳ Timeline View")
-        for item in all_upcoming:
-            st.markdown(f"🗓️ **{item['Due Date']}** — **[{item['Class']}]** {item['Assignment Name']} ({item['Category']}, {item['Points']} pts)")
     else:
-        st.info("No upcoming assignments logged yet. Click 'Auto-Detect' or manually add assignments in the Class Calculator tab.")
+        st.info("No upcoming assignments logged yet.")
 
 # ==========================================
 # TAB 5: GPA PLANNER
 # ==========================================
 with tab_gpa:
     st.markdown("### 🎯 GPA Planner")
-    
     with st.expander("⚙️ Customize Your GPA Scale"):
-        col_scale_head, col_scale_rst = st.columns([3, 1])
-        with col_scale_rst:
-            if st.button("🔄 Reset GPA Scale to Default"):
-                st.session_state.gpa_scale = [dict(row) for row in DEFAULT_GPA_SCALE]
-                st.rerun()
-
+        if st.button("🔄 Reset GPA Scale to Default"):
+            st.session_state.gpa_scale = [dict(row) for row in DEFAULT_GPA_SCALE]
+            st.rerun()
         edited_scale = st.data_editor(st.session_state.gpa_scale, num_rows="dynamic", use_container_width=True)
         try:
             gpa_dict = {str(row["Grade"]): {"Standard": float(row["Standard"]), "Honors": float(row["Honors"]), "AP/IB/DE": float(row["AP/IB/DE"])} for row in edited_scale if row.get("Grade")}
             st.session_state.gpa_scale = edited_scale
         except ValueError:
-            st.error("Invalid scale values. Please ensure numerical entries.")
-            gpa_dict = {}
+            st.error("Invalid scale values."); gpa_dict = {}
 
     c1, c2 = st.columns(2)
-    with c1:
-        num_classes = st.number_input("Number of courses:", min_value=1, value=6, step=1)
-    with c2:
-        gpa_mode = st.radio("Mode", ["Weighted", "Unweighted"])
+    with c1: num_classes = st.number_input("Number of courses:", min_value=1, value=6, step=1)
+    with c2: gpa_mode = st.radio("Mode", ["Weighted", "Unweighted"])
     
     total_gpa_points, total_credits = 0.0, 0.0
-    
     if gpa_dict:
         letter_options = list(gpa_dict.keys())
         for i in range(num_classes):
             c_name, c_grade, c_lvl, c_cred = st.columns([2, 1, 1, 1])
-            with c_name: st.text_input(f"Course {i+1}", placeholder=f"Course {i+1}", key=f"n_{i}")
+            with c_name: st.text_input(f"Course {i+1}", key=f"n_{i}")
             with c_grade: grade = st.selectbox("Grade", letter_options, key=f"g_{i}", index=1 if len(letter_options) > 1 else 0)
             with c_lvl: level = st.selectbox("Level", ["Standard", "Honors", "AP/IB/DE"], key=f"l_{i}")
             with c_cred: credits = st.number_input("Credits", min_value=0.0, value=1.0, step=0.5, key=f"c_{i}")
-                
-            active_level = "Standard" if gpa_mode == "Unweighted" else level
-            total_gpa_points += (gpa_dict[grade][active_level] * credits)
+            total_gpa_points += (gpa_dict[grade]["Standard" if gpa_mode == "Unweighted" else level] * credits)
             total_credits += credits
             
         current_gpa = (total_gpa_points / total_credits) if total_credits > 0 else 0.0
+        st.write("---"); st.metric(f"Your Current {gpa_mode} GPA", f"{current_gpa:.3f}")
         
-        st.write("---")
-        st.metric(f"Your Current {gpa_mode} GPA", f"{current_gpa:.3f}")
-        
-        st.write("---")
-        st.markdown("#### 🚀 Target GPA Calculator")
+        st.write("---"); st.markdown("#### 🚀 Target GPA Calculator")
         target_gpa = st.number_input("Target GPA", min_value=0.0, max_value=6.0, value=round(current_gpa + 0.1, 2), step=0.05)
         
         if st.button("Calculate Upgrades Needed", type="primary"):
-            target_total_points = target_gpa * total_credits
-            points_deficit = target_total_points - total_gpa_points
-            
+            points_deficit = (target_gpa * total_credits) - total_gpa_points
             if points_deficit <= 0:
                 st.success("🎉 You are already at or above your Target GPA!")
+                if st.session_state.settings.get("celebrations", True): st.balloons()
             else:
                 st.error(f"You are short by **{points_deficit:.2f} total GPA points** across your schedule.")
+
+# ==========================================
+# TAB 6: SETTINGS
+# ==========================================
+with tab_settings:
+    st.markdown("### ⚙️ Application Settings")
+    st.info("💡 **Tip for Background Colors:** To change between Dark Mode and Light Mode, click the three dots (`⋮`) in the top right corner of the screen, select **Settings**, and change the **Theme**. The options below control behavior and accent colors.")
+    
+    col_s1, col_s2 = st.columns(2)
+    
+    with col_s1:
+        st.markdown("#### Visuals & UI")
+        new_anim = st.toggle("Enable Bouncy UI Animations", value=st.session_state.settings.get("animations", True))
+        new_cel = st.toggle("Enable Success Celebrations (Balloons & Toasts)", value=st.session_state.settings.get("celebrations", True))
+        new_color = st.color_picker("Accent Color (Buttons & Metrics)", value=st.session_state.settings.get("accent_color", "#FF4B4B"))
+        
+    with col_s2:
+        st.markdown("#### Calculator Defaults")
+        new_target = st.number_input("Default Target Grade (%)", min_value=0.0, max_value=150.0, value=float(st.session_state.settings.get("default_target", 90.0)), step=1.0)
+    
+    if st.button("💾 Save Settings", type="primary"):
+        st.session_state.settings["animations"] = new_anim
+        st.session_state.settings["celebrations"] = new_cel
+        st.session_state.settings["accent_color"] = new_color
+        st.session_state.settings["default_target"] = new_target
+        st.toast('Settings saved successfully!', icon='✅')
+        st.rerun()
