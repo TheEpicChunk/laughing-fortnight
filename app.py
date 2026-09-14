@@ -5,6 +5,37 @@ import json
 import time
 from datetime import datetime
 
+import streamlit.components.v1 as components
+
+SFX_POP = "https://raw.githubusercontent.com/TheEpicChunk/laughing-fortnight/main/sounds/dragon-studio-pop-402322.mp3"
+
+components.html(
+    f"""
+    <script>
+        const sfxPop = new Audio("{SFX_POP}");
+        function attachTabListeners() {{
+            // Find all Streamlit tab buttons in the parent window
+            const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+            tabs.forEach(tab => {{
+                // Only attach the listener if it hasn't been added yet
+                if (!tab.dataset.hasSoundListener) {{
+                    tab.addEventListener('click', () => {{
+                        // cloneNode allows the sound to overlap if clicked rapidly
+                        sfxPop.cloneNode().play().catch(e => console.log(e));
+                    }});
+                    tab.dataset.hasSoundListener = 'true';
+                }}
+            }});
+        }}
+        
+        // Run immediately, then check periodically in case Streamlit redraws the UI
+        attachTabListeners();
+        setInterval(attachTabListeners, 1000); 
+    </script>
+    """,
+    height=0
+)
+
 st.set_page_config(page_title="Student Toolkit", page_icon="🎓", layout="wide")
 
 # ==========================================
