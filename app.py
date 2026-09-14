@@ -2,12 +2,13 @@ import streamlit as st
 import streamlit.components.v1 as components
 import re
 import json
+import time
 from datetime import datetime
 
 st.set_page_config(page_title="Student Toolkit", page_icon="🎓", layout="wide")
 
 # ==========================================
-# AUDIO RESOURCES (Direct GitHub Streams)
+# AUDIO RESOURCES
 # ==========================================
 SFX_POP = "https://raw.githubusercontent.com/TheEpicChunk/laughing-fortnight/main/sounds/dragon-studio-pop-402322.mp3"
 SFX_FANFARE = "https://raw.githubusercontent.com/TheEpicChunk/laughing-fortnight/main/sounds/freesound_community-fanfare-46385.mp3"
@@ -40,46 +41,73 @@ def get_default_settings():
         "sfx_enabled": True,
         "text_outline": True,
         "accent_color": "#FF4B4B",
-        "bg_color": "#0E1117", # Streamlit default dark background
+        "bg_color": "#0E1117", 
         "default_target": 90.0
     }
 
 # --- PER-USER SESSION ISOLATION ---
 if 'classes' not in st.session_state:
     st.session_state.classes = get_default_classes()
-
 if 'gpa_scale' not in st.session_state:
     st.session_state.gpa_scale = [dict(row) for row in DEFAULT_GPA_SCALE]
-
 if 'settings' not in st.session_state:
     st.session_state.settings = get_default_settings()
-
 if 'pending_audio' not in st.session_state:
     st.session_state.pending_audio = None
 
-# Helper function to queue sound effects before a rerun
+# ==========================================
+# ROBUST JAVASCRIPT AUDIO ENGINE
+# ==========================================
 def trigger_sound(url):
     if st.session_state.settings.get("sfx_enabled", True):
-        st.session_state.pending_audio = url
+        # Append timestamp to force Streamlit to re-render the HTML component 
+        # so overlapping sounds play reliably without getting cached out.
+        st.session_state.pending_audio = f"{url}?t={time.time()}"
 
-# Play queued audio automatically
-if st.session_state.pending_audio:
+if st.session_state.settings.get("sfx_enabled", True):
+    # 1. Frontend Listener: Attach POP sound to Tab switches instantly via JS
     components.html(
         f"""
-        <audio autoplay style="display:none;">
-            <source src="{st.session_state.pending_audio}" type="audio/mpeg">
-        </audio>
+        <script>
+            const sfxPop = new Audio("{SFX_POP}");
+            function attachTabListeners() {{
+                const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+                tabs.forEach(tab => {{
+                    if (!tab.dataset.hasSoundListener) {{
+                        tab.addEventListener('click', () => {{
+                            sfxPop.cloneNode().play().catch(e => console.log(e));
+                        }});
+                        tab.dataset.hasSoundListener = 'true';
+                    }}
+                }});
+            }}
+            attachTabListeners();
+            setInterval(attachTabListeners, 1000); // Re-attach if Streamlit redraws UI
+        </script>
         """,
         height=0
     )
-    st.session_state.pending_audio = None
+
+    # 2. Backend Player: Play triggered specific sounds (bypasses HTML audio tag limits)
+    if st.session_state.pending_audio:
+        base_url = st.session_state.pending_audio.split('?')[0]
+        ts = st.session_state.pending_audio.split('?t=')[1]
+        components.html(
+            f"""
+            <script>
+                // Execution ID: {ts}
+                var audio = new Audio("{base_url}");
+                audio.play().catch(e => console.log("Audio play failed:", e));
+            </script>
+            """,
+            height=0
+        )
+        st.session_state.pending_audio = None
 
 # ==========================================
-# DYNAMIC CSS INJECTION (Animations, Theming & Outlines)
+# DYNAMIC CSS INJECTION
 # ==========================================
 custom_css = ""
-
-# 1. Bouncy Animations
 if st.session_state.settings.get("animations", True):
     custom_css += """
     .stButton>button { transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) !important; border-radius: 8px !important; }
@@ -88,30 +116,24 @@ if st.session_state.settings.get("animations", True):
     [data-testid="stMetric"] { transition: transform 0.2s ease, box-shadow 0.2s ease !important; padding: 10px !important; border-radius: 10px !important; }
     [data-testid="stMetric"]:hover { transform: translateY(-3px) !important; background-color: rgba(150, 150, 150, 0.05) !important; }
     """
-
-# 2. Text Outline for readability
 if st.session_state.settings.get("text_outline", True):
     custom_css += """
     h1, h2, h3, h4, h5, h6, p, span, label, li, .stMarkdown, .stText {
         text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000 !important;
     }
     """
-
-# 3. Accent & Background Color overrides
 accent = st.session_state.settings.get("accent_color", "#FF4B4B")
 bg_color = st.session_state.settings.get("bg_color", "#0E1117")
-
 custom_css += f"""
 .stApp {{ background-color: {bg_color} !important; }}
 .stButton>button:hover {{ border-color: {accent} !important; color: {accent} !important; }}
 [data-testid="stMetricValue"] {{ color: {accent} !important; }}
 """
-
 if custom_css:
     st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
 
 # ==========================================
-# SIDEBAR: MANAGEMENT & LOCAL DATA EXPORT/IMPORT
+# SIDEBAR
 # ==========================================
 st.sidebar.title("📚 Class Manager")
 
@@ -120,13 +142,13 @@ with st.sidebar.form("add_class_form", clear_on_submit=True):
     if st.form_submit_button("➕ Add Class") and new_class_name:
         if new_class_name not in st.session_state.classes:
             st.session_state.classes[new_class_name] = {"paste": "", "s_weight": 80, "f_weight": 20, "upcoming": []}
-            if st.session_state.settings.get("celebrations", True):
-                st.toast(f'Added {new_class_name}!', icon='📚')
+            if st.session_state.settings.get("celebrations", True): st.toast(f'Added {new_class_name}!', icon='📚')
             trigger_sound(SFX_CONFIRM)
             st.rerun()
+        else:
+            trigger_sound(SFX_POP)
 
 class_list = list(st.session_state.classes.keys())
-
 if class_list:
     active_class = st.sidebar.selectbox("Select Active Class:", class_list)
     c_data = st.session_state.classes[active_class]
@@ -141,6 +163,7 @@ if class_list:
                     st.rerun()
                 else:
                     st.sidebar.error("Class name already exists.")
+                    trigger_sound(SFX_POP)
 
         st.write("---")
         if st.button("🗑️ Delete Class", type="secondary"):
@@ -150,6 +173,7 @@ if class_list:
                 st.rerun()
             else:
                 st.sidebar.error("You must have at least one class.")
+                trigger_sound(SFX_POP)
 else:
     st.session_state.classes = get_default_classes()
     st.rerun()
@@ -157,19 +181,8 @@ else:
 st.sidebar.write("---")
 st.sidebar.markdown("### 💾 Personal Data Backup")
 
-export_data = json.dumps({
-    "classes": st.session_state.classes,
-    "gpa_scale": st.session_state.gpa_scale,
-    "settings": st.session_state.settings
-}, indent=2)
-
-st.sidebar.download_button(
-    label="📥 Download Data Backup (.json)",
-    data=export_data,
-    file_name="my_student_toolkit_data.json",
-    mime="application/json",
-    use_container_width=True
-)
+export_data = json.dumps({"classes": st.session_state.classes, "gpa_scale": st.session_state.gpa_scale, "settings": st.session_state.settings}, indent=2)
+st.sidebar.download_button(label="📥 Download Data Backup (.json)", data=export_data, file_name="my_student_toolkit_data.json", mime="application/json", use_container_width=True)
 
 uploaded_backup = st.sidebar.file_uploader("📤 Restore Data Backup", type=["json"])
 if uploaded_backup is not None:
@@ -180,12 +193,12 @@ if uploaded_backup is not None:
                 st.session_state.classes = loaded["classes"]
                 st.session_state.gpa_scale = loaded.get("gpa_scale", [dict(row) for row in DEFAULT_GPA_SCALE])
                 st.session_state.settings = loaded.get("settings", get_default_settings())
-                if st.session_state.settings.get("celebrations", True):
-                    st.toast('Data restored successfully!', icon='💾')
+                if st.session_state.settings.get("celebrations", True): st.toast('Data restored successfully!', icon='💾')
                 trigger_sound(SFX_CONFIRM)
                 st.rerun()
         except Exception:
             st.sidebar.error("Invalid backup file format.")
+            trigger_sound(SFX_POP)
 
 if st.sidebar.button("🔄 Reset Entire App to Default"):
     st.session_state.classes = get_default_classes()
@@ -208,39 +221,24 @@ def calculate_grade(paste_data, s_w, f_w, drop_lowest=False):
         for date_str, name, cat, earned, possible in matches:
             name, cat = name.strip(), cat.lower()
             earned, possible = float(earned), float(possible)
-
             if possible > 0:
-                assignments.append({
-                    "date": date_str.strip() if date_str else "N/A",
-                    "name": name,
-                    "cat": cat,
-                    "earned": earned,
-                    "possible": possible,
-                    "pct": earned / possible
-                })
+                assignments.append({"date": date_str.strip() if date_str else "N/A", "name": name, "cat": cat, "earned": earned, "possible": possible, "pct": earned / possible})
 
         if drop_lowest and assignments:
             assignments.sort(key=lambda x: x["pct"])
             assignments.pop(0)
 
         for ast in assignments:
-            if ast["cat"] == 'summative':
-                s_earned += ast["earned"]
-                s_pos += ast["possible"]
-            else:
-                f_earned += ast["earned"]
-                f_pos += ast["possible"]
+            if ast["cat"] == 'summative': s_earned += ast["earned"]; s_pos += ast["possible"]
+            else: f_earned += ast["earned"]; f_pos += ast["possible"]
 
     s_pct = (s_earned / s_pos) if s_pos > 0 else 0.0
     f_pct = (f_earned / f_pos) if f_pos > 0 else 0.0
 
     overall = 0.0
-    if s_pos > 0 and f_pos > 0:
-        overall = ((s_pct * (s_w / 100)) + (f_pct * (f_w / 100))) * 100
-    elif s_pos > 0:
-        overall = s_pct * 100
-    elif f_pos > 0:
-        overall = f_pct * 100
+    if s_pos > 0 and f_pos > 0: overall = ((s_pct * (s_w / 100)) + (f_pct * (f_w / 100))) * 100
+    elif s_pos > 0: overall = s_pct * 100
+    elif f_pos > 0: overall = f_pct * 100
 
     return overall, s_earned, s_pos, f_earned, f_pos, s_pct, f_pct, assignments
 
@@ -249,12 +247,7 @@ def calculate_grade(paste_data, s_w, f_w, drop_lowest=False):
 # ==========================================
 st.title("🎓 Student Toolkit")
 tab_dash, tab_grade, tab_panic, tab_cal, tab_gpa, tab_settings = st.tabs([
-    "📊 Dashboard",
-    "📝 Class Calculator",
-    "🚨 Exam Panic Calc",
-    "📅 Due Dates",
-    "🎯 GPA Planner",
-    "⚙️ Settings"
+    "📊 Dashboard", "📝 Class Calculator", "🚨 Exam Panic Calc", "📅 Due Dates", "🎯 GPA Planner", "⚙️ Settings"
 ])
 
 # ==========================================
@@ -268,7 +261,6 @@ with tab_dash:
     for idx, (c_name, data) in enumerate(st.session_state.classes.items()):
         overall, s_earned, s_pos, f_earned, f_pos, s_pct, f_pct, _ = calculate_grade(data["paste"], data["s_weight"], data["f_weight"])
         status_color = "🟢" if overall >= 90 else "🟡" if overall >= 80 else "🔴" if overall > 0 else "⚪"
-
         col = cols[idx % 3]
         col.info(f"### {status_color} {c_name}\n**{round(overall, 2)}%**" if overall > 0 else f"### {status_color} {c_name}\n**No Data**")
 
@@ -296,11 +288,9 @@ with tab_dash:
     for item in class_stats:
         p_score = item["priority"]
         badge = "🔴 HIGH PRIORITY" if p_score >= 40 else "🟡 MEDIUM PRIORITY" if p_score >= 15 else "🟢 LOW PRIORITY"
-
         with st.expander(f"{badge} — **{item['name']}** ({round(item['overall'], 2)}%)"):
             if item["reasons"]:
-                for r in item["reasons"]:
-                    st.markdown(f"- {r}")
+                for r in item["reasons"]: st.markdown(f"- {r}")
             else:
                 st.write("✨ Class grade is stable with no immediate high-stakes deadlines detected.")
 
@@ -314,9 +304,8 @@ with tab_grade:
         col_s, col_f = st.columns(2)
         with col_s: c_data["s_weight"] = st.number_input("Summative Weight (%)", value=c_data["s_weight"], max_value=100, step=5)
         with col_f: c_data["f_weight"] = st.number_input("Formative Weight (%)", value=c_data["f_weight"], max_value=100, step=5)
-
         c_data["paste"] = st.text_area("Paste assignments from StudentVUE here:", value=c_data["paste"], height=150)
-
+        
         if st.button("🗑️ Clear Pasted Data for This Class"):
             c_data["paste"] = ""
             trigger_sound(SFX_TRASH)
@@ -347,7 +336,6 @@ with tab_grade:
         if st.button("🔍 Auto-Detect Upcoming Assignments"):
             pattern_upcoming = r'(?:([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s*\n\s*)?([^\n]+)\s*\n\s*(Summative|Formative)(?:(?!(?:Summative|Formative)).)*?Not Due(?:(?!(?:Summative|Formative)).)*?([\d\.]+)\s*Points'
             matches = re.findall(pattern_upcoming, c_data["paste"], flags=re.IGNORECASE | re.DOTALL)
-
             if matches:
                 count = 0
                 for date_str, name, cat, pts in matches:
@@ -359,9 +347,11 @@ with tab_grade:
                     trigger_sound(SFX_POP)
                 else:
                     st.info("No new upcoming assignments found.")
+                    trigger_sound(SFX_POP)
                 st.rerun()
             else:
                 st.warning("No upcoming assignments found with 'Not Due' and 'Points Possible'.")
+                trigger_sound(SFX_POP)
 
     with col_clear:
         if st.button("🗑️ Clear Upcoming List"):
@@ -430,13 +420,11 @@ with tab_grade:
         if last_cat == "Summative":
             f_pct_new = (f_earned_new / f_pos_new) if f_pos_new > 0 else 0.0
             f_contribution = f_pct_new * active_w_f if f_pos_new > 0 else 0.0
-            if active_w_s > 0:
-                needed_points = ((target_dec - f_contribution) / active_w_s) * s_pos_new - s_earned_new
+            if active_w_s > 0: needed_points = ((target_dec - f_contribution) / active_w_s) * s_pos_new - s_earned_new
         else:
             s_pct_new = (s_earned_new / s_pos_new) if s_pos_new > 0 else 0.0
             s_contribution = s_pct_new * active_w_s if s_pos_new > 0 else 0.0
-            if active_w_f > 0:
-                needed_points = ((target_dec - s_contribution) / active_w_f) * f_pos_new - f_earned_new
+            if active_w_f > 0: needed_points = ((target_dec - s_contribution) / active_w_f) * f_pos_new - f_earned_new
 
         st.markdown(f"#### Score needed on: **{last_name}** ({last_pts} pts)")
         if needed_points > last_pts: st.error(f"You need **{needed_points:.1f} / {last_pts}** (**{needed_points/last_pts*100:.1f}%**) — Requires Extra Credit!")
@@ -471,7 +459,6 @@ with tab_panic:
 with tab_cal:
     st.markdown("### 📅 Due Date Visualizer")
     all_upcoming = [{"Class": c_name, "Due Date": item.get("Date", "N/A"), "Assignment Name": item.get("Name", "Assignment"), "Category": item.get("Category", "Formative"), "Points": item.get("Points", 0)} for c_name, data in st.session_state.classes.items() for item in data.get("upcoming", [])]
-
     if all_upcoming:
         def parse_date(x):
             try: return datetime.strptime(x["Due Date"], "%m/%d/%y")
@@ -540,7 +527,6 @@ with tab_settings:
     st.info("💡 **Tip for Native Themes:** To change between Light and Dark mode panels entirely, click the three dots (`⋮`) in the top right corner of the screen, select **Settings**, and change the **Theme**.")
 
     col_s1, col_s2 = st.columns(2)
-
     with col_s1:
         st.markdown("#### Visuals & UI")
         new_anim = st.toggle("Enable Bouncy UI Animations", value=st.session_state.settings.get("animations", True))
